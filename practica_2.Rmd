@@ -1,0 +1,441 @@
+---
+title: "Práctica II"
+description: |
+  Análisis clúster
+author:
+  - name: Jonás Jiménez Gil
+    affiliation: Universidad Complutense de Madrid
+    affiliation_url: 
+date: "`r Sys.Date()`"
+output:
+    distill::distill_article:
+        highlight: kate
+        colorlinks: true
+        code_folding: false
+        toc: true            
+        toc_depth: 3     
+---
+
+```{r setup, include = FALSE}
+# Ajuste comunes de los chunk
+knitr::opts_chunk$set(fig.width = 9, fig.asp = 1, out.width = "100%",
+                      message = FALSE, warning = FALSE,
+                      echo = TRUE, res = 400)
+```
+
+# Instrucciones (leer antes de empezar)
+
+* Modifica dentro del documento `.Rmd` tus datos personales (nombre y DNI) ubicados en la cabecera del archivo.
+
+* Asegúrate antes de seguir editando el documento que el archivo `.Rmd` compila (Knit) correctamente y se genera el `html` correspondiente.
+
+* Los chunks creados están o vacíos o incompletos, de ahí que tengan la opción `eval = FALSE`. Una vez que edites lo que consideres debes de cambiar a `eval = TRUE` para que los chunk se ejecuten
+
+## Paquetes necesarios
+
+Necesitaremos los siguientes paquetes:
+
+* **Manejo de datos**: paquete `{tidyverse}`.
+* **Modelos**: paquete `{tidymodels}`
+* **Lectura excel**: paquete `{readxl}`
+* **Resumen numérico**: paquete `{skimr}`.
+* **Visualización de clústers y PCA**: paquete `{factoextra}` y `{FactoMineR}`
+* **Clustering divisivo**: paquete `{cluster}`
+
+```{r paquetes}
+# Borramos variables del environment
+rm(list = ls())
+library(tidyverse)
+library(tidymodels)
+library(readxl)
+library(skimr)
+library(factoextra)
+library(FactoMineR)
+library(cluster)
+library(corrplot)
+library(heatmaply)
+
+```
+
+
+# Carga de datos
+
+El archivo de datos a usar será `provincias.xlsx`
+
+```{r}
+provincias <- read_xlsx(path = "./provincias.xlsx")
+```
+
+El fichero contiene **información socioeconómica de las provincias españolas**
+
+```{r}
+glimpse(provincias)
+```
+
+
+Algunas de las variables son:
+
+* `Prov`: nombre de la provincia
+* `Poblacion`: habitantes
+* `Mortalidad`, `Natalidad`: tasa de mortalidad/natalidad (en tantos por mil)
+* `IPC`: índice de precios de consumo (sobre un valor base de 100).
+* `NumEmpresas`: número de empresas.
+* `PIB`: producto interior bruto
+* `CTH`: coyuntura turística hotelera (pernoctaciones en establecimientos hoteleros)
+
+# Ejercicio 1:
+
+> Calcula la matriz de covarianzas y de correlaciones. Calcula de nuevo la matriz deUsa el paquete `{corrplot}` para una representación gráfica de la misma. Detalla y comenta lo que consideres para su correcta interpretación.
+
+```{r eval = TRUE}
+# Antes de empezar a trabajar convertimos a data.frame para tener row.names y eliminamos Prov
+provincias_df <- as.data.frame(provincias) %>%
+  select(-Prov)
+row.names(provincias_df) <- provincias %>% pull(Prov)
+
+# Generamos una matriz de covarianzas
+cov_mat <-
+  cov(provincias_df)
+cov_mat
+# Generamos una matriz de correlaciones
+cor_mat <-
+  cor(provincias_df)
+cor_mat
+
+# Hacemos un corrplot para observar nuestros resultados de la matriz de correlaciones
+corrplot(cor(provincias_df), type = "upper",
+         tl.col = "black",  method = "ellipse")
+# Generamos otra matriz de tipo numérico para ver más exactamente estas correlaciones
+corrplot(cor_mat, method = 'number')
+
+```
+Podemos observar como las variables Poblacion, NumEmpresas, Industria, Construccion, CTH, Infor, AFS, APt, Ocupados, PIB y TVF tienen una alta correlación positiva entre todas ellas.
+También observamos que por ejemplo la tasa de paro tiene una correlación negativa media con las variables Mortalidad e IPC, a mayor TasaParo, menor IPC y Mortalidad
+
+
+# Ejercicio 2:
+
+> Estandariza los datos y guardalos en provincias_std
+
+```{r eval = TRUE}
+# Estandarizamos los datos selecionando solamente las variables númericas.
+provincias_std_df <- provincias_df %>% 
+  mutate(across(where(is.numeric),
+                ~scale(.)))
+
+```
+
+# Ejercicio 3:
+
+> Calcula con `eigen()` los autovalores y autovectores de la matriz de correlaciones e interpreta dichos resultados en relación a las componentes principales de las variables originales.
+
+```{r eval = TRUE}
+# Calculamos el número de autoelementos con la función eigen
+
+autoelementos <- eigen(cor_mat)
+autoelementos
+
+```
+
+# Ejercicio 4:
+
+> Haciendo uso de `PCA()` del paquete `{FactoMineR}` calcula todas las componentes principales. Repite de nuevo el análisis con el mínimo número de componentes necesarias para capturar al menos el 95% de la información de los datos.
+
+```{r eval = TRUE}
+# Haciendo uso de PCA() callculamos todas las componentes principales
+pca_fit <-
+  PCA(provincias_df, scale.unit = TRUE,
+      ncp = ncol(provincias_df), graph = FALSE)
+
+# Repetimos el proceso capturando al menos el 95% de la información de los datos
+# Calculamos mediante la función "eig" cual es el numéro de componentes necesarios para tener al menos el 95%
+pca_fit$eig
+
+# Volvemos a realizar el análisis con este número de componentes y lo guardamos en una nueva variable
+pca_fit_95 <-
+  PCA(provincias_df, scale.unit = TRUE, ncp = 6, graph = FALSE)
+
+```
+
+
+# Ejercicio 5:
+
+> Realiza las gráficas que consideres más útiles para poder interpretar adecuadamente las componentes principales obtenidas. ¿Cuál es
+la expresión para calcular la primera componente en función de las variables
+originales?
+
+
+```{r eval = TRUE}
+# Con fviz_eig() podemos visualizar la varianza explicada por cada componente
+fviz_eig(pca_fit,
+         barfill = "blue",
+         addlabels = TRUE) +
+  theme_minimal() +
+  labs(x = "Componente",
+       y = "% varianza explicada",
+       title = "Porcentaje de varianza explicada")
+
+# Visualizamos de forma manual la varianza acumulada y marcamos con una línea
+# el límite del 95%
+cumvar <- as_tibble(pca_fit$eig)
+names(cumvar) <- c("lambda", "var", "cumvar")
+
+ggplot(cumvar, aes(x = 1:18, y = cumvar)) +
+  geom_col(fill = "pink") +
+  geom_hline(yintercept = 95,
+             linetype = "dashed", color="black") +
+  theme_minimal() +
+  labs(x = "Componente",
+       y = "% varianza explicada",
+       title = "% varianza acumulada")
+```
+
+# Ejercicio 6:
+
+> ¿Cuál es la contribución de las variables originales en cada componente principal seleccionada? Proporciona las nuevas coordenadas de los datos. ¿Cuál de las variables es la que está peor explicada?
+
+```{r eval = TRUE}
+# Mostramos el porcentaje de lo que aporta cada variable a la varianza explicada por cada componente (la suma de cada columna es el 100%)
+pca_fit$var$contrib
+
+# Obtenemos unas nuevas coordenadas
+pca_scores <- as_tibble(pca_fit$ind$coord)
+names(pca_scores) <- c("PC_1", "PC_2", "PC_3", "PC_4", "PC_5", "PC_6", "PC_7", "PC_8", "PC_9", "PC_10", "PC_11", "PC_12", "PC_13", "PC_14", "PC_15", "PC_16", "PC_17", "PC_18")
+pca_scores #nuevas coordenadas
+
+# Variable peor explicada
+col <- c("#00AFBB", "#E7B800", "#FC4E07")
+fviz_pca_var(pca_fit, col.var = "cos2",
+             gradient.cols = col,
+             repel = TRUE) +
+  theme_minimal() + 
+  labs(title = "Coordenadas de las variables",
+       color = "Prop. var. explicada")
+# La variable peor explicada analizando el gráfico será CANE
+
+```
+
+
+# Ejercicio 7:
+
+> Calcula la matriz de distancias de los datos. Representa un mapa de calor de la matriz de datos, estandarizado y sin estandarizar, así como de la matriz de distancias. Comenta si se detectan inicialmente grupos de provincias.
+
+
+```{r eval = TRUE}
+# Calculamos la matriz de distancias
+d <- dist(provincias_std_df, method = "euclidean")
+
+# Visualizamos la matriz de distancias
+fviz_dist(d, show_labels = TRUE)
+
+# Mapa de calor de la matriz de datos provincias
+heatmaply(provincias_df,
+          seriate = "mean",
+          row_dend_left = TRUE,
+          plot_method = "plotly")
+
+# Mapa de calor de la matriz de datos provincias estandarizado
+heatmaply(provincias_std_df,
+          seriate = "mean",
+          row_dend_left = TRUE,
+          plot_method = "plotly")
+
+
+```
+A priori observamos 4 grupos, uno constituido por Madrid y Barcelona,, otro por Valencia/Alicante, otro Ceuta/Melilla, y luego uno muy amplio que contiene el resto de ciudades del país, el cual analizandolo con detenimiento se podría observar que igual se dividiría en las ciudades de la mitad superior de España y otro de la mitad inferior.
+
+# Ejercicio 8:
+
+> Realiza varios análisis de clúster jerárquico con distintos enlaces y comenta las diferencias. En cada caso visualiza el dendograma y comenta cuántos clusters recomendarías usar.
+
+
+```{r eval = TRUE}
+# Clustering (single)
+single_clust <- hclust(d, method = "single")
+
+#Dendograma Clustering (single)
+fviz_dend(single_clust, k =4,
+          cex = 0.5,
+          k_colors = c("#2E9FDF", "#00AFBB", "#E7B800", "#FC4E07"),
+          color_labels_by_k = TRUE,
+rect= TRUE) +
+  labs(title = "Dendograma Single")
+
+```
+Se observa que en el cluster simple nos aparecen 4 clusters, con Madrid, Barcelona Y Valencia diferenciadas, y luego el resto de ciudades del país. No me parece demasiado real y útil este análisis así que analizaremos el siguiente.
+
+```{r eval = TRUE}
+# Clustering (complete)
+complete_clust <- hclust(d, method = "complete")
+
+#Dendograma Clustering (complete)
+fviz_dend(complete_clust, k =4,
+          cex = 0.5,
+          k_colors = c("#2E9FDF", "#00AFBB", "#E7B800", "#FC4E07"),
+          color_labels_by_k = TRUE,
+rect= TRUE) +
+  labs(title = "Dendograma Complete")
+
+```
+El dendograma del Clúster Complete calca el análisis que realizamos previamente con la matriz de distancias. Nos agrupa Madrid/Barcelona, Alicante/Valencia, Ceuta/Melilla y luego el resto de las ciudades del país, donde además se pueden observar algunos subgrupos dentro de este último clúster.
+```{r eval = TRUE}
+# Clustering (average)
+average_clust <- hclust(d, method = "average")
+
+#Dendograma Clustering (average)
+fviz_dend(average_clust, k =4,
+          cex = 0.5,
+          k_colors = c("#2E9FDF", "#00AFBB", "#E7B800", "#FC4E07"),
+          color_labels_by_k = TRUE,
+rect= TRUE) +
+  labs(title = "Dendograma average")
+
+```
+Obtenemos un análisis muy similar al conseguido mediante el clúster complete.
+```{r eval = TRUE}
+# Clustering (centroid)
+centroid_clust <-
+  hclust(d, method = "centroid")
+# Dendograma
+fviz_dend(centroid_clust, k = 4,
+          cex = 0.5, 
+          k_colors =
+            c("#2E9FDF", "#00AFBB",
+              "#E7B800", "#FC4E07"),
+          color_labels_by_k = TRUE, 
+          rect = TRUE) +
+  labs(title = "Dendograma (centroid)")
+
+```
+Nos aparece un análisis que lo considero erróneo ya que no nos agrupa todas las Provincias
+```{r eval = TRUE}
+# Clustering (ward)
+ward_clust <-
+  hclust(d, method = "ward.D2")
+# Dendograma
+fviz_dend(ward_clust, k = 4,
+          cex = 0.5, 
+          k_colors =
+            c("#2E9FDF", "#00AFBB",
+              "#E7B800", "#FC4E07"),
+          color_labels_by_k = TRUE, 
+          rect = TRUE) +
+  labs(title = "Dendograma (Ward)")
+
+```
+Nos aparece un dendograma bastante interesante que nos agrupa a Madrid/Barcelona por una parte, Alicante/Valencia por otra, y luego dos grupos, uno que observamos que se corresponde a la parte norte del país y otro a la parte sur.
+
+
+# Ejercicio 9:
+
+> ¿Qué número óptimo de clusters nos indican los criterios Silhoutte y de Elbow? Representar los individuos agrupados según el número de clusters elegido.
+
+```{r eval = TRUE}
+# Nº de clusters óptimo según Silhoutte
+# Nos aparece que el número óptimo son 2
+fviz_nbclust(provincias_std_df, kmeans,
+             method = "silhouette") +
+  theme_minimal() +
+  labs(x = "nº clústeres (k)",
+       y = "Variabilidad total intra-clústeres (W)",
+       title = "Número óptimo basado en silhouette")
+
+# Nº de clusters óptimo según Elbow
+# Nos aparece que el número óptimo son 3
+fviz_nbclust(provincias_std_df, kmeans,
+             method = "wss") +
+  geom_vline(xintercept = 3,
+             linetype = 2) +
+  theme_minimal() +
+  labs(x = "nº clústeres (k)",
+       y = "Variabilidad total intra-clústeres (W)",
+       title = "Número óptimo basado en variabilidad total intra-clústeres")
+
+```
+Finalmente escogemos 4 como el número de clusters. Vamos a representarlos ahora
+según los criterios Silhoutte y Elbow
+
+```{r eval = TRUE}
+# Creamos variable Kclust para poder representar Silhouette
+kclust <- kmeans(provincias_std_df,
+                 centers = 4, iter.max = 50)
+silS <- silhouette(kclust$cluster, d)
+row.names(silS) <- row.names(provincias_std_df)
+
+# Visualización para Silohuete
+fviz_silhouette(silS, label = TRUE) +
+  scale_fill_manual(values =
+                      c("#2E9FDF", "#00AFBB",
+                        "#E7B800", "#FC4E07")) +
+  scale_color_manual(values =
+                      c("#2E9FDF", "#00AFBB",
+                        "#E7B800", "#FC4E07")) +
+  theme_minimal() +
+  labs(title =
+         "Índice silhouette para k-means con k = 4") +
+  # Giramos etiquetas eje
+  theme(axis.text.x =
+          element_text(angle = 90,
+                       vjust = 0.5,
+                       hjust=1))
+
+# Realizamos lo mismo para Elbow
+# Clustering (ward)
+ward_clust <-
+  hclust(d, method = "ward.D2")
+groups <- cutree(ward_clust, k = 4)
+silE <- silhouette(groups, d)
+row.names(silE) <- row.names(provincias_std_df)
+# Visualización
+fviz_silhouette(silE, label = TRUE,
+                print.summary = FALSE) +
+  scale_fill_manual(values =
+                      c("#2E9FDF", "#00AFBB",
+                        "#E7B800", "#FC4E07")) +
+  scale_color_manual(values =
+                      c("#2E9FDF", "#00AFBB",
+                        "#E7B800", "#FC4E07")) +
+  theme_minimal() +
+  labs(title =
+         "Índice silhouette para jerárquico Ward con k = 4") +
+  # Giramos etiquetas eje
+  theme(axis.text.x =
+          element_text(angle = 90,
+                       vjust = 0.5,
+                       hjust = 1))
+```
+
+# Ejercicio 10:
+
+> Con el número de clusters decidido en el apartado anterior realizar un
+agrupamiento no jerárquico de k-medias. Representar los clusters formados en los planos de las Componentes principales. Interpreta los resultados y evalúa la calidad del análisis clúster. Explica las provincias que forman cada uno de los clusters y comentar cuales son las características socioeconómicas que las hacen pertenecer a dicho cluster
+
+```{r eval = TRUE}
+# Clustering k-means
+kclust <- kmeans(provincias_std_df,
+                 centers = 4,
+                 iter.max = 50)
+kclust$totss
+# Clustering
+fviz_cluster(list(data =
+                    provincias_std_df,
+                  cluster =
+                    kclust$cluster),
+             palette =
+               c("#2E9FDF", "#00AFBB",
+                 "#E7B800", "#FC4E07"),
+             ellipse.type = "convex", 
+             repel = TRUE,
+             show.clust.cent = FALSE) +
+  labs(title = "Cluster (k-means)") +
+  theme_minimal()
+
+```
+El análisis de K-medias nos arroja unos valores diferentes a los que hemos cribado según la matriz de distancias.
+Obtenemos también 4 clústers pero agrupados de manera diferente a la que hemos realizado nosotros manualmente.
+Por una parte tenemos agrupados Barcelona y Madrid que son las Provincias donde se concentrará la mayor riqueza del país ya que tienen el mayor nº de población,  Num de empresas, Industria, Construcción etc.
+Luego nos aparece un clúster formado por las provincias medianas del país (Valencia, Baleares, Málaga...), provincias que están en el rango superior en valores como PIB, Industria, Construcción etc.
+Luego tenemos el grupo 3, el cual es algo diferente al que creamos nosotros con la matriz de distancias. Tenemos 3 provincias (Zaragoza, Lleida y Navarra) que podrían pertenecer al grupo 2 por sus características socioeconómicas. El resto de las provincias se encuentran en el rango medio, medio-alto o medio-bajo en todas las variables. En este grupo se concentran sobre todo las ciudades de la parte norte del país.
+Por último tenemos el grupo 4, que es el grupo donde se concentran los peores valores socioeconómicos, tasas de desempleo más altas, natalidad más alta, mortalidad más alta, PIB, Industria, Tasa de actividad más bajas de todo el país. Este grupo de provincias las podemos situar en la parte sur del país.
+
+Podemos hacer un análisis bastante fiable de como están socioeconómicamente el país. Unas dos macrociudades en la punta, luego unas provincias medianas-grandes siguiendo, después provincias medianas del norte del país con valores medios y un grupo de provincias del sur rezagadas.
